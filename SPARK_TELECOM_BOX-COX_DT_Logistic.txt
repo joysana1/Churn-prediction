@@ -1,0 +1,157 @@
+import datetime
+
+t1 = datetime.datetime.now()
+ 
+
+from pyspark.sql import SparkSession
+spark = SparkSession \
+        .builder \
+        .appName("spark aws") \
+        .config("spark.some.config.option", "43") \
+        .getOrCreate()
+
+
+
+#df_rddf1= spark.read.format('com.databricks.spark.csv').options(header='true', inferschema='true').load("Telecom_customer churn (100000).csv",header=True)
+df_rddf1= spark.read.format('com.databricks.spark.csv').options(header='true', inferschema='true').load("s3://dt-method1/Telecom_customer churn (100000).csv",header=True)
+#df_rddf1= spark.read.format('com.databricks.spark.csv').options(header='true', inferschema='true').load("s3://dt-method1/Telecom_customer churn (50000).csv",header=True)
+#df_rddf1= spark.read.format('com.databricks.spark.csv').options(header='true', inferschema='true').load("s3://dt-method1/Telecom_customer churn (25000).csv",header=True)
+
+df = df_rddf1.select("*").toPandas()
+
+
+num_df = df.select_dtypes(include=['float64', 'int64']).copy()
+cat_df = df.select_dtypes(include=['object']).copy()
+
+
+
+# Categorical boolean mask
+categorical_feature_mask = cat_df.dtypes==object
+# filter categorical columns using mask and turn it into a list
+categorical_cols = cat_df.columns[categorical_feature_mask].tolist()
+
+import numpy as np
+#conData=np.log(0.00001 + 1)
+conData=0
+cat_df=cat_df.fillna(conData)
+num_df=num_df.fillna(conData)
+cat_df=cat_df.astype(str)
+from sklearn.preprocessing import LabelEncoder
+le = LabelEncoder()
+cat_df[categorical_cols] = cat_df[categorical_cols].apply(lambda col: le.fit_transform(col))
+
+#cat_df[categorical_cols].head(10)
+
+change_mou=num_df['change_mou']
+change_rev=num_df['change_rev']
+num_df=num_df.drop(['change_mou'], axis=1)
+num_df=num_df.drop(['change_rev'], axis=1)
+
+#num_df=num_df.drop(['Customer_ID'], axis=1)
+
+churn=df['churn']
+ 
+
+
+num_df=num_df.fillna(conData)
+
+
+num_df=num_df.replace([np.inf, -np.inf], np.nan)
+num_df=num_df.fillna(conData)
+num_df[num_df < 0] = 0
+
+#BOX-COX
+lemda=0.5
+num_df=(num_df**lemda)
+num_df=num_df-1
+num_df[num_df < 0]=0
+num_df=num_df.div(lemda)
+#End BOX-COX
+#Z-score
+#num_df=(num_df-num_df.min())/(num_df.std(ddof=0)) ##Z-score
+
+#Log
+#num_df=round(np.log(num_df.add(1)),2)
+#num_df[num_df < 0]=1
+#num_df[num_df == 0]=1
+#num_df=np.log(num_df)
+#num_df=num_df.replace([np.inf, -np.inf], np.nan)
+#End Log
+
+num_df[num_df < 0]=0
+
+import pandas as pd
+result_df = pd.concat([num_df, cat_df, df['churn']], axis=1)
+np.nan_to_num(result_df)
+
+result_df_op=result_df
+
+
+df = spark.createDataFrame(result_df_op)
+
+
+
+from pyspark.ml.feature import OneHotEncoderEstimator, StringIndexer, VectorAssembler
+stages = []
+label_stringIdx = StringIndexer(inputCol = 'churn', outputCol = 'label')
+stages += [label_stringIdx]
+numericCols = ['rev_Mean','mou_Mean','totmrc_Mean','da_Mean','ovrmou_Mean','ovrrev_Mean','vceovr_Mean','datovr_Mean','roam_Mean','drop_vce_Mean','drop_dat_Mean','blck_vce_Mean','blck_dat_Mean','unan_vce_Mean','unan_dat_Mean','plcd_vce_Mean','plcd_dat_Mean','recv_vce_Mean','recv_sms_Mean','comp_vce_Mean','comp_dat_Mean','custcare_Mean','ccrndmou_Mean','cc_mou_Mean','inonemin_Mean','threeway_Mean','mou_cvce_Mean','mou_cdat_Mean','mou_rvce_Mean','owylis_vce_Mean','mouowylisv_Mean','iwylis_vce_Mean','mouiwylisv_Mean','peak_vce_Mean','peak_dat_Mean','mou_peav_Mean','mou_pead_Mean','opk_vce_Mean','opk_dat_Mean','mou_opkv_Mean','mou_opkd_Mean','drop_blk_Mean','attempt_Mean','complete_Mean','callfwdv_Mean','callwait_Mean','totmou','totrev','adjrev','adjmou','avgrev','avgmou','avgqty','hnd_price','truck','rv','lor','adults','income','numbcars','forgntvl']
+cat_cols=['new_cell', 'crclscod', 'asl_flag', 'prizm_social_one', 'area',
+       'dualband', 'refurb_new', 'hnd_webcap', 'ownrent', 'dwlltype',
+       'marital', 'infobase', 'HHstatin', 'dwllsize', 'ethnic', 'kid0_2',
+       'kid3_5', 'kid6_10', 'kid11_15', 'kid16_17', 'creditcd']
+assemblerInputs = numericCols+cat_cols
+assembler = VectorAssembler(inputCols=assemblerInputs, outputCol="features")
+stages += [assembler]
+
+ 
+from pyspark.ml import Pipeline
+pipeline = Pipeline(stages = stages)
+pipelineModel = pipeline.fit(df)
+df = pipelineModel.transform(df)
+selectedCols = ['churn', 'label', 'features']
+df = df.select(selectedCols)
+df.printSchema()
+
+train, test = df.randomSplit([0.7, 0.3], seed = 2018)
+print("Training Dataset Count: " + str(train.count()))
+print("Test Dataset Count: " + str(test.count()))
+
+
+from pyspark.ml.classification import LogisticRegression
+lr = LogisticRegression(featuresCol = 'features', labelCol = 'label', maxIter=10)
+lrModel = lr.fit(train)
+predictions = lrModel.transform(test)
+predictions.select('prediction', 'probability').show(10)
+ 
+ 
+ 
+from pyspark.ml.evaluation import BinaryClassificationEvaluator
+evaluator = BinaryClassificationEvaluator()
+print("Test Area Under ROC: " + str(evaluator.evaluate(predictions, {evaluator.metricName: "areaUnderROC"})))
+
+
+from pyspark.ml.evaluation import MulticlassClassificationEvaluator
+# Select (prediction, true label) and compute test error
+evaluator = MulticlassClassificationEvaluator(labelCol="label", predictionCol="prediction", metricName="accuracy")
+accuracy = evaluator.evaluate(predictions)
+print("accuracy= %g" % accuracy)
+print("Test Error = %g" % (1.0 - accuracy))
+
+
+
+t2 = datetime.datetime.now()
+print("t1: " + t1.strftime("%Y-%m-%d %H:%M:%S"))
+print("t2: "+ t2.strftime("%Y-%m-%d %H:%M:%S"))
+print(t1 - t2)
+
+from sklearn.metrics import confusion_matrix
+y_true = predictions.select("label")
+y_true = y_true.toPandas()
+
+y_pred = predictions.select("prediction")
+y_pred = y_pred.toPandas()
+
+class_names=[0.0, 1.0]
+cnf_matrix = confusion_matrix(y_true, y_pred,labels=class_names)
+cnf_matrix
