@@ -1,16 +1,16 @@
 # Churn-prediction
 Churn-prediction
 
-**Data preprocessing**
+**Data preprocessing::**
 Label encoder is used to normalize the categorical variable
 
-**Data Transformation**
+**Data Transformation::**
 For each data transformation sepeate fiels are used
 Base line (RAW) is used for Original dataset without any data transformation
 
-**Feature selection**
+**Feature selection::**
 Univarient feature selection is used for feature selection
 
-**Paremeter tunning**
+**Paremeter tunning::**
 Grid Search CV is used for parameter tuning for the classifiers
 
