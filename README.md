@@ -15,7 +15,7 @@ Univarient feature selection is used for feature selection
 Grid Search CV is used for parameter tuning for the classifiers
 
 **Dataset::**
-Three datasets we used in our study
+Three datasets are used in our study
 1) data set 1 Telecom_customer churn (10000).rar
 2) churn-5000.csv
 3) churn-data-333.csv
